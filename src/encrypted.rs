@@ -88,11 +88,13 @@ impl EncryptedChannel {
                     (1, Side::Respondent) => {
                         // <- s, se
                         let _l = handshake.read_message(&in_message, &mut self.buf)?;
-                        self.state = PeerState::Connected { encryptor: handshake.into_transport_mode()? };
+                        self.state = PeerState::Connected {
+                            encryptor: handshake.into_transport_mode()?,
+                        };
                         Ok(0)
                     }
 
-                    _ => panic!("BUG: Invalid state of EncryptedMessage")
+                    _ => panic!("BUG: Invalid state of EncryptedMessage"),
                 }
             }
             PeerState::Unconnected => {
@@ -122,8 +124,7 @@ impl EncryptedChannel {
         }
     }
 
-    
-    pub  fn encrypt(&mut self,  data: &[u8], encrypted: &mut [u8]) -> Result<usize> {
+    pub fn encrypt(&mut self, data: &[u8], encrypted: &mut [u8]) -> Result<usize> {
         if let PeerState::Connected { ref mut encryptor } = self.state {
             let len = encryptor.write_message(data, encrypted)?;
             Ok(len)
@@ -132,9 +133,9 @@ impl EncryptedChannel {
         }
     }
 
-    pub  fn decrypt(&mut self, encrypted: &[u8], data : &mut [u8]) -> Result<usize> {
+    pub fn decrypt(&mut self, encrypted: &[u8], data: &mut [u8]) -> Result<usize> {
         if let PeerState::Connected { ref mut encryptor } = self.state {
-            let len =  encryptor.read_message(encrypted, data)?;
+            let len = encryptor.read_message(encrypted, data)?;
             Ok(len)
         } else {
             Err("invalid channel state, cannot decrypt".into())
