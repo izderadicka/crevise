@@ -1,11 +1,14 @@
 use crate::encrypted::{EncryptedChannel, Keypair};
 use crate::Result;
+use futures::{future, FutureExt};
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::Arc;
-use tokio::sync;
+use std::time::Duration;
+use tokio::{spawn, sync, time::timeout};
 
-const CAPACITY: usize = 1000;
+const CAPACITY: usize = 1000; //initial capacity of map
+const TIMEOUT: Duration = Duration::from_secs(10); // handshake timeout
 
 #[derive(Clone)]
 pub struct PeersMap {
@@ -24,7 +27,18 @@ impl PeersMap {
         peer: SocketAddr,
         first_message: &mut [u8],
     ) -> Result<usize> {
+        self.timeout_task(peer);
         self.inner.start_handshake(peer, first_message).await
+    }
+
+    fn timeout_task(&self, peer: SocketAddr) {
+        let inner = self.inner.clone();
+        let f = timeout(TIMEOUT, future::pending::<()>()).then(move |_| async move {
+            if inner.remove_if_not_connected(&peer).await {
+                eprintln!("Handshake timeout");
+            }
+        });
+        spawn(f);
     }
 
     pub async fn continue_handshake(
@@ -33,9 +47,13 @@ impl PeersMap {
         in_message: &[u8],
         next_message: &mut [u8],
     ) -> Result<usize> {
-        self.inner
+        let (sz, start) = self.inner
             .continue_handshake(peer, in_message, next_message)
-            .await
+            .await?;
+        if start {
+            self.timeout_task(peer);
+        }
+        Ok(sz)
     }
 
     pub async fn encrypt(
@@ -60,7 +78,7 @@ impl PeersMap {
         self.inner.is_connected(peer).await
     }
 
-    pub async fn remove(&self, peer: &SocketAddr) -> bool{
+    pub async fn remove(&self, peer: &SocketAddr) -> bool {
         self.inner.remove(peer).await
     }
 }
@@ -97,10 +115,10 @@ impl PeersMapInner {
         peer: SocketAddr,
         in_message: &[u8],
         next_message: &mut [u8],
-    ) -> Result<usize> {
+    ) -> Result<(usize, bool)> {
         //eprintln!("Processing handshake from peer {}", peer);
         let mut ch = match self.map.read().await.get(&peer) {
-            Some(ch) => return ch.lock().await.continue_handshake(in_message, next_message),
+            Some(ch) => return ch.lock().await.continue_handshake(in_message, next_message).map(|sz| (sz, false)),
             None => EncryptedChannel::new(self.key()),
         };
         // This is for first message in handshake
@@ -115,18 +133,22 @@ impl PeersMapInner {
             }
             None => {
                 eprintln!("Encrypted channel stored");
-                Ok(sz)
+                Ok((sz, true))
             }
         }
     }
 
-    async fn remove_if_not_connected(&self, peer: &SocketAddr) {
+    /// returns false if connected, true otherwise - so if it does not exist or is not connected
+    async fn remove_if_not_connected(&self, peer: &SocketAddr) -> bool {
         let mut map = self.map.write().await;
         if let Some(ch) = map.get(peer) {
             if !ch.lock().await.is_connected() {
                 map.remove(peer);
+            } else {
+                return false;
             }
         }
+        true
     }
 
     async fn is_connected(&self, peer: &SocketAddr) -> bool {
@@ -137,7 +159,7 @@ impl PeersMapInner {
         }
     }
 
-    async fn remove(&self, peer: &SocketAddr) -> bool{
+    async fn remove(&self, peer: &SocketAddr) -> bool {
         self.map.write().await.remove(peer).is_some()
     }
 
