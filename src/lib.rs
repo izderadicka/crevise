@@ -66,29 +66,45 @@ where
     async fn process_incomming(&mut self, len: usize, peer: SocketAddr) -> Result<()> {
         //eprintln!("Received message size {}, enc is {}", len, enc.is_connected());
         if self.peers.is_connected(&peer).await {
-            let size = self
+            match self
                 .peers
                 .decrypt(&peer, &self.buf2[..len], &mut self.buf)
-                .await?;
-            self.out
-                .send(Message::Post {
-                    peer,
-                    content: std::str::from_utf8(&self.buf[..size])
-                        .unwrap_or("<invalid string>")
-                        .to_string(),
-                })
-                .await?;
+                .await
+            {
+                Ok(size) => {
+                    self.out
+                        .send(Message::Post {
+                            peer,
+                            content: std::str::from_utf8(&self.buf[..size])
+                                .unwrap_or("<invalid string>")
+                                .to_string(),
+                        })
+                        .await?;
+                }
+                Err(e) => {
+                    self.clear_peer(peer).await;
+                    eprintln!("Error while decrypting message: {}", e);
+                }
+            };
         } else {
-            let size = self
+            match self
                 .peers
                 .continue_handshake(peer, &self.buf2[..len], &mut self.buf)
-                .await?;
+                .await {
+                    Ok(size) => {
+                        if size > 0 {
+                            self.to_send = OutputMessage::Plain((peer, size))
+                        } else {
+                            self.out.send(Message::HadshakeDone { peer }).await?;
+                        }
+                    }
+                    Err(e) => {
+                        self.clear_peer(peer).await;
+                        eprintln!("Error in handshake : {}", e);
+                    }
+                };
 
-            if size > 0 {
-                self.to_send = OutputMessage::Plain((peer, size))
-            } else {
-                self.out.send(Message::HadshakeDone { peer }).await?;
-            }
+            
         }
         Ok(())
     }
@@ -115,6 +131,15 @@ where
         Ok(())
     }
 
+    async fn clear_peer(&mut self, peer: SocketAddr) {
+        if self.peers.remove(&peer).await {
+            self.out
+                .send(Message::Cleared { peer })
+                .await
+                .unwrap_or_else(|e| eprintln!("Cannot send message: {}", e))
+        }
+    }
+
     pub async fn run(mut self) -> Result<()> {
         let mut sigint = signal(SignalKind::interrupt())?;
         let mut sigterm = signal(SignalKind::terminate())?;
@@ -125,19 +150,26 @@ where
             // until it's writable and we're able to do so.
             match replace(&mut self.to_send, OutputMessage::None) {
                 OutputMessage::Encrypted((peer, l)) => {
-                    let len = self
+                    match self
                         .peers
                         .encrypt(&peer, &self.buf[..l], &mut self.buf2)
-                        .await?;
-                    self.socket.send_to(&self.buf2[..len], peer).await?;
-                    self.out.send(Message::Sent { peer }).await?;
+                        .await
+                    {
+                        Ok(len) => {
+                            self.socket.send_to(&self.buf2[..len], peer).await?;
+                            self.out.send(Message::Sent { peer }).await?;
+                        }
+                        Err(e) => {
+                            self.clear_peer(peer).await;
+                            eprintln!("Encryption error: {}", e);
+                        }
+                    }
                 }
                 OutputMessage::Plain((peer, l)) => {
                     if self.peers.is_connected(&peer).await {
                         self.out.send(Message::HadshakeDone { peer }).await?;
                     };
                     self.socket.send_to(&self.buf[..l], peer).await?;
-                    eprintln!("Sending handshake message");
                 }
                 OutputMessage::None => (),
             };

@@ -39,7 +39,7 @@ impl PeersMap {
     }
 
     pub async fn encrypt(
-        &mut self,
+        &self,
         peer: &SocketAddr,
         data: &[u8],
         encrypted: &mut [u8],
@@ -48,7 +48,7 @@ impl PeersMap {
     }
 
     pub async fn decrypt(
-        &mut self,
+        &self,
         peer: &SocketAddr,
         encrypted: &[u8],
         data: &mut [u8],
@@ -58,6 +58,10 @@ impl PeersMap {
 
     pub async fn is_connected(&self, peer: &SocketAddr) -> bool {
         self.inner.is_connected(peer).await
+    }
+
+    pub async fn remove(&self, peer: &SocketAddr) -> bool{
+        self.inner.remove(peer).await
     }
 }
 
@@ -94,19 +98,18 @@ impl PeersMapInner {
         in_message: &[u8],
         next_message: &mut [u8],
     ) -> Result<usize> {
-        eprintln!("Processing handshake from peer {}", peer);
-        // TODO: is there better way to handle this - I was thinking about upgrading read lock to write lock, but it does not seem to be possible
+        //eprintln!("Processing handshake from peer {}", peer);
         let mut ch = match self.map.read().await.get(&peer) {
             Some(ch) => return ch.lock().await.continue_handshake(in_message, next_message),
             None => EncryptedChannel::new(self.key()),
         };
-
+        // This is for first message in handshake
         let sz = ch.continue_handshake(in_message, next_message)?;
-        eprintln!("Was first message from {}", peer);
+        //eprintln!("Was first message from {}", peer);
         let mut m = self.map.write().await;
         match m.insert(peer, sync::Mutex::new(ch)) {
             Some(prev) => {
-                eprintln!("There was previous handshake!!!");
+                //eprintln!("There was previous handshake!!!");
                 m.insert(peer, prev);
                 Err("There was previous handshake!!!".into())
             }
@@ -134,8 +137,8 @@ impl PeersMapInner {
         }
     }
 
-    async fn remove(&self, peer: &SocketAddr) {
-        self.map.write().await.remove(peer);
+    async fn remove(&self, peer: &SocketAddr) -> bool{
+        self.map.write().await.remove(peer).is_some()
     }
 
     async fn encrypt(&self, peer: &SocketAddr, data: &[u8], encrypted: &mut [u8]) -> Result<usize> {
