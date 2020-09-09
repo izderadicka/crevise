@@ -134,7 +134,7 @@ where
     async fn clear_peer(&mut self, peer: SocketAddr) {
         if self.peers.remove(&peer).await {
             self.out
-                .send(Message::Cleared { peer })
+                .send(Message::HandshakeCleared { peer })
                 .await
                 .unwrap_or_else(|e| eprintln!("Cannot send message: {}", e))
         }
