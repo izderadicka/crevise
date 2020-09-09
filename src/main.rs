@@ -2,7 +2,7 @@
 #![recursion_limit = "512"]
 
 use bytes::Bytes;
-use crevise::{generate_keypair, Error, MainLoop, Result, Message};
+use crevise::{generate_keypair, Error, MainLoop, Message, Result};
 use futures::prelude::*;
 use std::env;
 use tokio::io;
@@ -10,10 +10,10 @@ use tokio_util::codec::{BytesCodec, FramedRead, FramedWrite, LinesCodec};
 
 fn format_message(m: Message) -> String {
     match m {
-        Message::Post{peer, content} => format!("\r:-> ({}) {}\n", peer, content),
+        Message::Post { peer, content } => format!("\r:-> ({}) {}\n", peer, content),
         Message::NewLine => "<-: ".into(),
-        Message::HadshakeDone{peer} => format!("\nHandshake done with peer {}\n", peer),
-        _ => "".into()
+        Message::HadshakeDone { peer } => format!("\nHandshake done with peer {}\n", peer),
+        _ => "".into(),
     }
 }
 
@@ -23,18 +23,16 @@ async fn main() -> Result<()> {
         .nth(1)
         .unwrap_or_else(|| "127.0.0.1:8080".to_string());
 
-    let peer = env::args().nth(2);
-
     let key = generate_keypair();
 
-    let input = FramedRead::new(io::stdin(), LinesCodec::new()).map_err(|e| e.into());
+    let input = FramedRead::new(io::stdin(), LinesCodec::new())
+        .err_into()
+        .and_then(|s| future::ready(s.parse()));
     let output = io::stdout();
     let output = FramedWrite::new(output, BytesCodec::new())
-        .with(|m: Message| {
-            future::ok::<_, Error>(Bytes::from(format_message(m)))
-        });
+        .with(|m: Message| future::ok::<_, Error>(Bytes::from(format_message(m))));
 
-    let server = MainLoop::new(addr, key, peer, input, output).await?;
+    let server = MainLoop::new(addr, key, input, output).await?;
     // This starts the server task.
     let res = server.run().await;
     match res {
