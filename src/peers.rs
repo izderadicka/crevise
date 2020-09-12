@@ -1,5 +1,8 @@
-use crate::encrypted::{EncryptedChannel, Keypair};
 use crate::Result;
+use crate::{
+    encrypted::{EncryptedChannel, Keypair},
+    Error,
+};
 use futures::{future, FutureExt};
 use std::collections::HashMap;
 use std::net::SocketAddr;
@@ -47,7 +50,8 @@ impl PeersMap {
         in_message: &[u8],
         next_message: &mut [u8],
     ) -> Result<usize> {
-        let (sz, start) = self.inner
+        let (sz, start) = self
+            .inner
             .continue_handshake(peer, in_message, next_message)
             .await?;
         if start {
@@ -118,7 +122,13 @@ impl PeersMapInner {
     ) -> Result<(usize, bool)> {
         //eprintln!("Processing handshake from peer {}", peer);
         let mut ch = match self.map.read().await.get(&peer) {
-            Some(ch) => return ch.lock().await.continue_handshake(in_message, next_message).map(|sz| (sz, false)),
+            Some(ch) => {
+                return ch
+                    .lock()
+                    .await
+                    .continue_handshake(in_message, next_message)
+                    .map(|sz| (sz, false))
+            }
             None => EncryptedChannel::new(self.key()),
         };
         // This is for first message in handshake
@@ -129,7 +139,7 @@ impl PeersMapInner {
             Some(prev) => {
                 //eprintln!("There was previous handshake!!!");
                 m.insert(peer, prev);
-                Err("There was previous handshake!!!".into())
+                Err(Error::msg("There was previous handshake!!!"))
             }
             None => {
                 eprintln!("Encrypted channel stored");
@@ -168,7 +178,7 @@ impl PeersMapInner {
             .read()
             .await
             .get(peer)
-            .ok_or_else(|| "Peer not connected")?
+            .ok_or_else(|| Error::msg("Peer not connected"))?
             .lock()
             .await
             .encrypt(data, encrypted)
@@ -179,7 +189,7 @@ impl PeersMapInner {
             .read()
             .await
             .get(peer)
-            .ok_or_else(|| "Peer not connected")?
+            .ok_or_else(|| Error::msg("Peer not connected"))?
             .lock()
             .await
             .decrypt(encrypted, data)

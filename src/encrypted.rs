@@ -1,6 +1,12 @@
-use super::Result;
+use std::{fs::File, fs::OpenOptions, io::Read, io::Write, path::Path};
+
+use super::{Error, Result};
+use chacha20poly1305::aead::{Aead, NewAead};
+use chacha20poly1305::{ChaCha20Poly1305, Key, Nonce};
+use rand::RngCore;
 pub use snow::Keypair;
 use snow::{params::NoiseParams, Builder, HandshakeState, TransportState};
+use std::io::Cursor;
 
 // trait MessageStream {
 //     fn send();
@@ -53,7 +59,7 @@ impl EncryptedChannel {
             };
             Ok(len)
         } else {
-            Err("Invalid channel state, cannot start handshake".into())
+            Err(Error::msg("Invalid channel state, cannot start handshake"))
         }
     }
 
@@ -118,9 +124,9 @@ impl EncryptedChannel {
 
                 Ok(len)
             }
-            PeerState::Connected { .. } => {
-                Err("Invalid channel state, cannot continue handshake".into())
-            }
+            PeerState::Connected { .. } => Err(Error::msg(
+                "Invalid channel state, cannot continue handshake",
+            )),
         }
     }
 
@@ -129,7 +135,7 @@ impl EncryptedChannel {
             let len = encryptor.write_message(data, encrypted)?;
             Ok(len)
         } else {
-            Err("Invalid channel state, cannot encrypt".into())
+            Err(Error::msg("Invalid channel state, cannot encrypt"))
         }
     }
 
@@ -138,7 +144,7 @@ impl EncryptedChannel {
             let len = encryptor.read_message(encrypted, data)?;
             Ok(len)
         } else {
-            Err("invalid channel state, cannot decrypt".into())
+            Err(Error::msg("invalid channel state, cannot decrypt"))
         }
     }
 
@@ -149,16 +155,6 @@ impl EncryptedChannel {
             false
         }
     }
-}
-
-pub fn generate_keypair() -> Keypair {
-    Builder::new(
-        EncryptedChannel::NOISE_PARAMS
-            .parse()
-            .expect("Invalid params"),
-    )
-    .generate_keypair()
-    .expect("cannot generate keypair")
 }
 
 impl EncryptedChannel {
@@ -178,13 +174,172 @@ impl EncryptedChannel {
     }
 }
 
+pub fn generate_key() -> Keypair {
+    Builder::new(
+        EncryptedChannel::NOISE_PARAMS
+            .parse()
+            .expect("Invalid params"),
+    )
+    .generate_keypair()
+    .expect("cannot generate keypair")
+}
+
+struct EncryptedKey {
+    salt: Vec<u8>,
+    nonce: Vec<u8>,
+    enc_key: Vec<u8>,
+}
+
+impl<O: Write> SimpleSerialize<O> for EncryptedKey {
+    fn write_to(&self, out: &mut O) -> Result<()> {
+        write_vec(&self.salt, out)?;
+        write_vec(&self.nonce, out)?;
+        write_vec(&self.enc_key, out)
+    }
+}
+
+impl<I: Read> SimpleDeserialize<I> for EncryptedKey {
+    fn read_from(inp: &mut I) -> Result<Self> {
+        Ok(EncryptedKey {
+            salt: read_vec(inp)?,
+            nonce: read_vec(inp)?,
+            enc_key: read_vec(inp)?,
+        })
+    }
+}
+
+trait SimpleSerialize<O> {
+    fn write_to(&self, out: &mut O) -> Result<()>;
+}
+trait SimpleDeserialize<I>: Sized {
+    fn read_from(inp: &mut I) -> Result<Self>;
+}
+
+fn write_vec<O: Write>(vec: &Vec<u8>, out: &mut O) -> Result<()> {
+    let l1 = vec.len();
+    if l1 > 255 {
+        return Err(Error::msg("Invalid vec length"));
+    }
+    out.write_all(&[l1 as u8])?;
+    out.write_all(vec)?;
+    Ok(())
+}
+
+fn read_vec<I: Read>(inp: &mut I) -> Result<Vec<u8>> {
+    let mut len_buf = [0; 1];
+    inp.read_exact(&mut len_buf)?;
+    let len = len_buf[0] as usize;
+    let mut vec = vec![0; len];
+    inp.read_exact(&mut vec[..len])?;
+    Ok(vec)
+}
+
+impl<O: Write> SimpleSerialize<O> for Keypair {
+    fn write_to(&self, out: &mut O) -> Result<()> {
+        write_vec(&self.private, out)?;
+        write_vec(&self.public, out)
+    }
+}
+
+impl<I: Read> SimpleDeserialize<I> for Keypair {
+    fn read_from(inp: &mut I) -> Result<Self> {
+        Ok(Keypair {
+            private: read_vec(inp)?,
+            public: read_vec(inp)?,
+        })
+    }
+}
+
+fn rand_bytes(len: usize) -> Vec<u8> {
+    let mut salt = vec![0; len];
+    rand::thread_rng().fill_bytes(&mut salt);
+    salt
+}
+
+pub fn save_key<P: AsRef<Path>>(key: &Keypair, file: P, password: &str) -> Result<()> {
+    let path: &Path = file.as_ref();
+    let mut f = OpenOptions::new().create_new(true).write(true).open(path)?;
+    let enc_key = encrypt_key(key, password)?;
+    enc_key.write_to(&mut f)?;
+
+    Ok(())
+}
+
+fn encrypt_key(keypair: &Keypair, password: &str) -> Result<EncryptedKey> {
+    let salt = rand_bytes(32);
+    let key = argon2::hash_raw(password.as_bytes(), &salt, &argon2::Config::default())?;
+    let cipher = ChaCha20Poly1305::new(Key::from_slice(&key));
+
+    let nonce = rand_bytes(12);
+
+    let mut plain_key = Vec::with_capacity(keypair.public.len() + keypair.public.len() + 2);
+    keypair.write_to(&mut plain_key)?;
+    let enc_key = cipher.encrypt(Nonce::from_slice(&nonce), &plain_key[..])?;
+
+    Ok(EncryptedKey {
+        salt,
+        nonce,
+        enc_key,
+    })
+}
+
+fn decrypt_key(enc_key: EncryptedKey, password: &str) -> Result<Keypair> {
+    let key = argon2::hash_raw(
+        password.as_bytes(),
+        &enc_key.salt,
+        &argon2::Config::default(),
+    )?;
+    let cipher = ChaCha20Poly1305::new(Key::from_slice(&key));
+    let decrypted_key = cipher.decrypt(Nonce::from_slice(&enc_key.nonce), &enc_key.enc_key[..])?;
+    let mut io = Cursor::new(decrypted_key);
+    Keypair::read_from(&mut io)
+}
+
+pub fn load_key<P: AsRef<Path>>(file: P, password: &str) -> Result<Keypair> {
+    let mut f = File::open(file)?;
+    let enc_key = EncryptedKey::read_from(&mut f)?;
+    decrypt_key(enc_key, password)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
+    use std::io::{Cursor, Seek, SeekFrom};
+
     #[test]
-    fn test_creation() {
-        let key = generate_keypair();
+    fn test_key_creation() {
+        let key = generate_key();
         let _ec = EncryptedChannel::new(key);
+    }
+
+    #[test]
+    fn test_serialization() -> Result<()> {
+        let key = generate_key();
+        let mut io = Cursor::new(vec![0; 256]);
+        key.write_to(&mut io)?;
+        io.seek(SeekFrom::Start(0))?;
+        let key2 = Keypair::read_from(&mut io)?;
+        assert_eq!(key.private, key2.private, "private");
+        assert_eq!(key.public, key2.public, "public");
+
+        Ok(())
+    }
+
+    #[test]
+
+    fn test_key_encryption() -> Result<()> {
+        let key = generate_key();
+        let pass = "SedmLumpuSlohloPumpu";
+
+        let enc_key = encrypt_key(&key, pass)?;
+        let mut io = Cursor::new(Vec::new());
+        enc_key.write_to(&mut io)?;
+        io.seek(SeekFrom::Start(0))?;
+        let enc_key = EncryptedKey::read_from(&mut io)?;
+        let key2 = decrypt_key(enc_key, pass)?;
+        assert_eq!(key.private, key2.private, "private");
+        assert_eq!(key.public, key2.public, "public");
+        Ok(())
     }
 }

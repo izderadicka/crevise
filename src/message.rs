@@ -5,6 +5,6 @@ pub enum Message {
     Sent { peer: SocketAddr },
     HadshakeDone { peer: SocketAddr },
     HandshakeCleared { peer: SocketAddr },
-    HandshakeError { peer: SocketAddr},
+    HandshakeError { peer: SocketAddr },
     NewLine, // TODO: This is temporary workaround
 }

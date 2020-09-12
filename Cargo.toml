@@ -13,3 +13,10 @@ tokio-util = {version="0.3", features=["codec", "udp"]}
 futures = "0.3"
 snow = "0.7"
 structopt = "0.3"
+blake3 = "0.3"
+data-encoding = "2.3"
+rust-argon2 = "0.8"
+chacha20poly1305 = {version="0.5"}
+rand = "0.7"
+aead = {version="0.3", features=["std"]}
+anyhow = "1.0"

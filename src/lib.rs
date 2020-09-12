@@ -11,11 +11,11 @@ use tokio::net::UdpSocket;
 use tokio::signal::unix::{signal, SignalKind};
 
 use command::Command;
-pub use encrypted::generate_keypair;
+pub use encrypted::{generate_key, load_key, save_key};
 pub use message::Message;
 use peers::PeersMap;
 
-pub type Error = Box<dyn std::error::Error + Send + Sync>;
+pub type Error = anyhow::Error;
 pub type Result<T> = std::result::Result<T, Error>;
 
 mod command;
@@ -90,21 +90,20 @@ where
             match self
                 .peers
                 .continue_handshake(peer, &self.buf2[..len], &mut self.buf)
-                .await {
-                    Ok(size) => {
-                        if size > 0 {
-                            self.to_send = OutputMessage::Plain((peer, size))
-                        } else {
-                            self.out.send(Message::HadshakeDone { peer }).await?;
-                        }
+                .await
+            {
+                Ok(size) => {
+                    if size > 0 {
+                        self.to_send = OutputMessage::Plain((peer, size))
+                    } else {
+                        self.out.send(Message::HadshakeDone { peer }).await?;
                     }
-                    Err(e) => {
-                        self.clear_peer(peer).await;
-                        eprintln!("Error in handshake : {}", e);
-                    }
-                };
-
-            
+                }
+                Err(e) => {
+                    self.clear_peer(peer).await;
+                    eprintln!("Error in handshake : {}", e);
+                }
+            };
         }
         Ok(())
     }

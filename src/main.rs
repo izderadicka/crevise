@@ -1,12 +1,15 @@
 #![warn(rust_2018_idioms)]
 #![recursion_limit = "512"]
 
+use anyhow::Context;
+use args::parse_args;
 use bytes::Bytes;
-use crevise::{generate_keypair, Error, MainLoop, Message, Result};
+use crevise::{generate_key, load_key, save_key, Error, MainLoop, Message, Result};
 use futures::prelude::*;
-use std::env;
 use tokio::io;
 use tokio_util::codec::{BytesCodec, FramedRead, FramedWrite, LinesCodec};
+
+mod args;
 
 fn format_message(m: Message) -> String {
     match m {
@@ -19,27 +22,33 @@ fn format_message(m: Message) -> String {
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    let addr = env::args()
-        .nth(1)
-        .unwrap_or_else(|| "127.0.0.1:8080".to_string());
+    let args = parse_args()?;
+    if args.generate_secret_key {
+        let key = generate_key();
+        save_key(&key, args.secret_key_file(), args.password())
+            .context("Error generating secret key")?;
+        eprintln!("Key was generated and saved");
+        Ok(())
+    } else {
+        let key = load_key(args.secret_key_file(), args.password())
+            .context("Error while loading secret key, you may need to generate it first")?;
 
-    let key = generate_keypair();
+        let input = FramedRead::new(io::stdin(), LinesCodec::new())
+            .err_into()
+            .and_then(|s| future::ready(s.parse()));
+        let output = io::stdout();
+        let output = FramedWrite::new(output, BytesCodec::new())
+            .with(|m: Message| future::ok::<_, Error>(Bytes::from(format_message(m))));
 
-    let input = FramedRead::new(io::stdin(), LinesCodec::new())
-        .err_into()
-        .and_then(|s| future::ready(s.parse()));
-    let output = io::stdout();
-    let output = FramedWrite::new(output, BytesCodec::new())
-        .with(|m: Message| future::ok::<_, Error>(Bytes::from(format_message(m))));
+        let server = MainLoop::new(args.listen, key, input, output).await?;
+        // This starts the server task.
+        let res = server.run().await;
+        match res {
+            Err(e) => eprintln!("finished with error {}", e),
+            Ok(_) => eprintln!("finished"),
+        }
 
-    let server = MainLoop::new(addr, key, input, output).await?;
-    // This starts the server task.
-    let res = server.run().await;
-    match res {
-        Err(e) => eprintln!("finished with error {}", e),
-        Ok(_) => eprintln!("finished"),
+        // workaround as background thread which reads from stdin is still running
+        std::process::exit(0);
     }
-
-    // workaround as background thread which reads from stdin is still running
-    std::process::exit(0);
 }
