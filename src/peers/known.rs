@@ -19,7 +19,7 @@ pub struct KnownPeers {
 }
 
 impl KnownPeers {
-    fn from_json_reader<I: Read>(inp: &mut I) -> Result<Self> {
+    pub fn from_json_reader<I: Read>(inp: &mut I) -> Result<Self> {
         use serde_json::Value;
         let json: Value = serde_json::from_reader(inp)?;
         let mut peers = KnownPeers {

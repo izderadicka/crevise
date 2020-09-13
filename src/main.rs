@@ -39,6 +39,8 @@ async fn main() -> Result<()> {
             return Ok(())
         }
 
+        let peers = crevise::load_peers_from_json(args.known_peers())?;
+
         let input = FramedRead::new(io::stdin(), LinesCodec::new())
             .err_into()
             .and_then(|s| future::ready(s.parse()));
@@ -46,7 +48,7 @@ async fn main() -> Result<()> {
         let output = FramedWrite::new(output, BytesCodec::new())
             .with(|m: Message| future::ok::<_, Error>(Bytes::from(format_message(m))));
 
-        let server = MainLoop::new(args.listen, key, input, output).await?;
+        let server = MainLoop::new(args.listen, key, input, output, peers).await?;
         // This starts the server task.
         let res = server.run().await;
         match res {

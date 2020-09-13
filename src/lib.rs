@@ -47,7 +47,7 @@ where
     I: Stream<Item = Result<Command>> + Unpin,
     O: Sink<Message, Error = Error> + Unpin,
 {
-    pub async fn new(addr: impl ToSocketAddrs, key: Keypair, input: I, output: O) -> Result<Self> {
+    pub async fn new(addr: impl ToSocketAddrs, key: Keypair, input: I, output: O, peers: SharedKnownPeers) -> Result<Self> {
         let socket = UdpSocket::bind(&addr).await?;
         eprintln!("Listening on: {}", socket.local_addr()?);
 
@@ -57,7 +57,7 @@ where
             buf2: vec![0; 10000],
             to_send: OutputMessage::None,
             input,
-            peers: PeersMap::new(key),
+            peers: PeersMap::new(key, peers),
             out: output,
             //key,
         };

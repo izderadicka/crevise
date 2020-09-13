@@ -12,6 +12,7 @@ use tokio::{spawn, sync, time::timeout};
 use blake2::VarBlake2s;
 use blake2::digest::{Update, VariableOutput};
 use crate::error::{new_error,ensure};
+use known::SharedKnownPeers;
 
 pub mod known;
 
@@ -75,9 +76,9 @@ pub struct PeersMap {
 }
 
 impl PeersMap {
-    pub fn new(my_key: Keypair) -> Self {
+    pub fn new(my_key: Keypair, known_peers: SharedKnownPeers) -> Self {
         PeersMap {
-            inner: Arc::new(PeersMapInner::new(my_key)),
+            inner: Arc::new(PeersMapInner::new(my_key, known_peers)),
         }
     }
 
@@ -146,13 +147,15 @@ impl PeersMap {
 struct PeersMapInner {
     map: sync::RwLock<HashMap<SocketAddr, sync::Mutex<EncryptedChannel>>>,
     key: Keypair,
+    known_peers: SharedKnownPeers
 }
 
 impl PeersMapInner {
-    fn new(my_key: Keypair) -> Self {
+    fn new(my_key: Keypair, known_peers: SharedKnownPeers) -> Self {
         PeersMapInner {
             map: sync::RwLock::new(HashMap::with_capacity(CAPACITY)),
             key: my_key,
+            known_peers
         }
     }
 
@@ -164,7 +167,7 @@ impl PeersMapInner {
     }
 
     async fn start_handshake(&self, peer: SocketAddr, first_message: &mut [u8]) -> Result<usize> {
-        let mut ch = EncryptedChannel::new(self.key());
+        let mut ch = EncryptedChannel::new(self.key(), self.known_peers.clone());
         let sz = ch.start_handshake(first_message)?;
         self.map.write().await.insert(peer, sync::Mutex::new(ch));
         Ok(sz)
@@ -185,7 +188,7 @@ impl PeersMapInner {
                     .continue_handshake(in_message, next_message)
                     .map(|sz| (sz, false))
             }
-            None => EncryptedChannel::new(self.key()),
+            None => EncryptedChannel::new(self.key(), self.known_peers.clone()),
         };
         // This is for first message in handshake
         let sz = ch.continue_handshake(in_message, next_message)?;

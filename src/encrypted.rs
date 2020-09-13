@@ -1,6 +1,9 @@
-use std::{fs::File, fs::OpenOptions, io::Read, io::Write, path::Path};
+use std::{fs::File, fs::OpenOptions, io::Read, io::Write, net::SocketAddr, path::Path};
 
-use crate::{Result, error::{new_error, ensure}};
+use crate::{
+    error::{ensure, new_error},
+    PeerId, Result, SharedKnownPeers,
+};
 use chacha20poly1305::aead::{Aead, NewAead};
 use chacha20poly1305::{ChaCha20Poly1305, Key, Nonce};
 use rand::RngCore;
@@ -36,6 +39,7 @@ pub struct EncryptedChannel {
     key: Keypair,
     params: NoiseParams,
     buf: Vec<u8>,
+    known_peers: SharedKnownPeers,
 }
 
 impl EncryptedChannel {
@@ -82,6 +86,8 @@ impl EncryptedChannel {
                         // <- e, ee, s, es
                         handshake.read_message(&in_message, &mut self.buf)?;
 
+                        let (_addr, _nick) = self.check_peer()?;
+
                         // -> s, se
                         let len = handshake.write_message(&[], next_message)?;
                         self.state = PeerState::Connected {
@@ -94,6 +100,7 @@ impl EncryptedChannel {
                     (1, Side::Respondent) => {
                         // <- s, se
                         let _l = handshake.read_message(&in_message, &mut self.buf)?;
+                        let (_addr, _nick) = self.check_peer()?;
                         self.state = PeerState::Connected {
                             encryptor: handshake.into_transport_mode()?,
                         };
@@ -130,6 +137,22 @@ impl EncryptedChannel {
         }
     }
 
+    fn check_peer<'a>(&'a self) -> Result<(Option<&'a SocketAddr>, &'a str)> {
+        if let PeerState::Connecting { ref handshake, .. } = self.state {
+            let pubkey = handshake
+                .as_ref()
+                .expect("BUG: Invalid state, handshake expected")
+                .get_remote_static()
+                .ok_or_else(|| new_error!("remote public key must be know"))?;
+            let peer_id = PeerId::from_public_key(pubkey);
+            self.known_peers
+                .get_by_peer_id(&peer_id)
+                .ok_or_else(|| new_error!("peer is not known"))
+        } else {
+            panic!("Invalid state: can be used only in Connecting state")
+        }
+    }
+
     pub fn encrypt(&mut self, data: &[u8], encrypted: &mut [u8]) -> Result<usize> {
         if let PeerState::Connected { ref mut encryptor } = self.state {
             let len = encryptor.write_message(data, encrypted)?;
@@ -161,7 +184,7 @@ impl EncryptedChannel {
     const NOISE_PARAMS: &'static str = "Noise_XX_25519_ChaChaPoly_BLAKE2s";
     const MAX_HANDSHAKE_MSG_SIZE: usize = 1024;
     //const MAX_MSG_SIZE: usize = 65_000;
-    pub fn new(key: Keypair) -> Self {
+    pub fn new(key: Keypair, known_peers: SharedKnownPeers) -> Self {
         EncryptedChannel {
             state: PeerState::Unconnected,
             key,
@@ -170,6 +193,7 @@ impl EncryptedChannel {
                 .expect("Invalid params"),
 
             buf: vec![0; EncryptedChannel::MAX_HANDSHAKE_MSG_SIZE],
+            known_peers,
         }
     }
 }
@@ -303,12 +327,19 @@ pub fn load_key<P: AsRef<Path>>(file: P, password: &str) -> Result<Keypair> {
 mod tests {
     use super::*;
 
-    use std::io::{Cursor, Seek, SeekFrom};
+    use std::{
+        io::{Cursor, Seek, SeekFrom},
+        sync::Arc,
+    };
 
     #[test]
-    fn test_key_creation() {
+    fn test_key_creation() -> Result<()> {
         let key = generate_key();
-        let _ec = EncryptedChannel::new(key);
+        let known_peers = Arc::new(crate::peers::known::KnownPeers::from_json_reader(
+            &mut Cursor::new("{}"),
+        )?);
+        let _ec = EncryptedChannel::new(key, known_peers);
+        Ok(())
     }
 
     #[test]
