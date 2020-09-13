@@ -1,4 +1,4 @@
-use crate::{Error, Result};
+use crate::{Error, Result, error::{bail, new_error}};
 use std::net::SocketAddr;
 use std::str::FromStr;
 
@@ -10,7 +10,7 @@ pub enum Command {
 fn split_at_first_space<'a>(s: &'a str) -> Result<(&'a str, &'a str)> {
     let first_space = s
         .find(' ')
-        .ok_or_else(|| Error::msg("Cannot split by space"))?;
+        .ok_or_else(|| new_error!("Cannot split by space"))?;
     let (a, b) = s.split_at(first_space);
     Ok((a, b.trim()))
 }
@@ -30,7 +30,7 @@ impl FromStr for Command {
                     text: text.into(),
                 }
             }
-            _ => return Err(Error::msg(format!("Invalid command {}", cmd))),
+            _ => bail!("Invalid command {}", cmd),
         })
     }
 }

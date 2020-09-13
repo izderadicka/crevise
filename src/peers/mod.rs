@@ -4,14 +4,70 @@ use crate::{
     Error,
 };
 use futures::{future, FutureExt};
-use std::collections::HashMap;
+use std::{collections::HashMap, fmt::Display, str::FromStr};
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::{spawn, sync, time::timeout};
+use blake2::VarBlake2s;
+use blake2::digest::{Update, VariableOutput};
+use crate::error::{new_error,ensure};
+
+pub mod known;
+
 
 const CAPACITY: usize = 1000; //initial capacity of map
 const TIMEOUT: Duration = Duration::from_secs(10); // handshake timeout
+
+const PEER_ID_SIZE:usize = 20;
+#[derive(Debug, PartialEq,Eq, Clone, Copy, Hash)]
+pub struct PeerId {
+    id: [u8;PEER_ID_SIZE]
+}
+
+impl PeerId {
+
+    fn empty() -> Self {
+        PeerId{
+            id: [0;PEER_ID_SIZE]
+        }
+    }
+
+    pub fn from_public_key(public_key: &[u8]) -> Self {
+        let mut hasher = VarBlake2s::new(PEER_ID_SIZE).expect("BUG: invalid hash size");
+        hasher.update(public_key);
+        let mut id = PeerId::empty();
+        hasher.finalize_variable(|res|  {id.id.copy_from_slice(res); });
+        id
+
+    }
+    
+}
+
+impl From<&Keypair> for PeerId {
+    fn from(key: &Keypair) -> Self {
+        PeerId::from_public_key(&key.public)
+    }
+}
+
+impl Display for PeerId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let encoded = data_encoding::BASE32_NOPAD.encode(&self.id);
+        f.write_str(&encoded)
+    }
+}
+
+impl FromStr for PeerId {
+    type Err = Error;
+
+    fn from_str(s: &str) -> Result<Self> {
+        ensure!(s.len() == PEER_ID_SIZE * 8 / 5 ,"Invalid size of Peer ID {}", s.len());
+        let mut peer_id = PeerId::empty();
+        let size = data_encoding::BASE32_NOPAD.decode_mut(s.as_bytes(), &mut peer_id.id).map_err(|e| new_error!("Error decoding Peer ID: {:?}",e))?;
+        ensure!(size == PEER_ID_SIZE, "Invalid size of Peer ID after decoding {}", size);
+        Ok(peer_id)
+    }
+}
 
 #[derive(Clone)]
 pub struct PeersMap {
@@ -139,7 +195,7 @@ impl PeersMapInner {
             Some(prev) => {
                 //eprintln!("There was previous handshake!!!");
                 m.insert(peer, prev);
-                Err(Error::msg("There was previous handshake!!!"))
+                Err(new_error!("There was previous handshake!!!"))
             }
             None => {
                 eprintln!("Encrypted channel stored");
@@ -178,7 +234,7 @@ impl PeersMapInner {
             .read()
             .await
             .get(peer)
-            .ok_or_else(|| Error::msg("Peer not connected"))?
+            .ok_or_else(|| new_error!("Peer not connected"))?
             .lock()
             .await
             .encrypt(data, encrypted)
@@ -189,9 +245,35 @@ impl PeersMapInner {
             .read()
             .await
             .get(peer)
-            .ok_or_else(|| Error::msg("Peer not connected"))?
+            .ok_or_else(|| new_error!("Peer not connected"))?
             .lock()
             .await
             .decrypt(encrypted, data)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::generate_key;
+
+    #[test]
+    fn test_peer_id() -> Result<()> {
+        let dummy_public = [1u8, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24];
+        let peer_id = PeerId::from_public_key(&dummy_public);
+        let human_readable = peer_id.to_string();
+        assert_eq!(32, human_readable.len());
+        let peer_id2: PeerId = human_readable.parse()?;
+        assert_eq!(peer_id, peer_id2);
+
+        let key = generate_key();
+        let peer_id: PeerId = (&key).into();
+        let human_readable = peer_id.to_string();
+        assert_eq!(32, human_readable.len());
+        let peer_id2: PeerId = human_readable.parse()?;
+        assert_eq!(peer_id, peer_id2);
+
+
+        Ok(())
     }
 }

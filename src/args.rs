@@ -1,4 +1,4 @@
-use crevise::{Error, Result};
+use crevise::{Error, Result, error::{bail, new_error}};
 use std::{env, fs};
 use std::{net::SocketAddr, path::PathBuf};
 use structopt::StructOpt;
@@ -16,6 +16,12 @@ pub struct Args {
 
     #[structopt(short, long)]
     pub generate_secret_key: bool,
+
+    #[structopt(long)]
+    pub show_my_id: bool,
+
+    #[structopt(short, long)]
+    known_peers: Option<PathBuf>
 }
 
 pub fn parse_args() -> Result<Args> {
@@ -25,9 +31,9 @@ pub fn parse_args() -> Result<Args> {
         if let Ok(p) = env::var("CREVISE_PASSWORD") {
             args.password = Some(p);
         } else {
-            return Err(Error::msg(
+            bail!(
                 "password mut be provided either through env variable or argument",
-            ));
+            );
         }
     }
 
@@ -37,10 +43,10 @@ pub fn parse_args() -> Result<Args> {
         .or_else(|| env::var_os("CREVISE_CONFIG_DIR").map(|p| p.into()))
         .or_else(|| env::var_os("HOME").map(|h| PathBuf::from(h).join(".crevise")))
         .or_else(|| Some(PathBuf::from(".crevise")))
-        .ok_or(Error::msg("Cannot get config dir"))?;
+        .ok_or(new_error!("Cannot get config dir"))?;
 
     if cfg.exists() && !cfg.is_dir() {
-        return Err(Error::msg("config dir {:?} is not directory"));
+        bail!("config dir {:?} is not directory");
     } else if !cfg.exists() {
         fs::create_dir(&cfg)?;
     }
@@ -50,6 +56,11 @@ pub fn parse_args() -> Result<Args> {
 }
 
 impl Args {
+
+    pub fn known_peers(&self) -> PathBuf {
+        self.known_peers.clone().unwrap_or_else(|| self.config_dir.as_ref().unwrap().join("peers"))
+    }
+
     pub fn password(&self) -> &str {
         self.password
             .as_ref()

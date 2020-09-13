@@ -9,19 +9,21 @@ use std::net::SocketAddr;
 use tokio::net::ToSocketAddrs;
 use tokio::net::UdpSocket;
 use tokio::signal::unix::{signal, SignalKind};
-
 use command::Command;
-pub use encrypted::{generate_key, load_key, save_key};
-pub use message::Message;
 use peers::PeersMap;
 
-pub type Error = anyhow::Error;
-pub type Result<T> = std::result::Result<T, Error>;
+pub use encrypted::{generate_key, load_key, save_key};
+pub use message::Message;
+pub use error::{Error, Result};
+pub use peers::{PeerId, known::{KnownPeers, load_peers_from_json, SharedKnownPeers}};
+
+
 
 mod command;
 mod encrypted;
 pub mod message;
 mod peers;
+pub mod error;
 
 enum OutputMessage {
     None,

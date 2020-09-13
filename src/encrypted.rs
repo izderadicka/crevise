@@ -1,6 +1,6 @@
 use std::{fs::File, fs::OpenOptions, io::Read, io::Write, path::Path};
 
-use super::{Error, Result};
+use crate::{Result, error::{new_error, ensure}};
 use chacha20poly1305::aead::{Aead, NewAead};
 use chacha20poly1305::{ChaCha20Poly1305, Key, Nonce};
 use rand::RngCore;
@@ -59,7 +59,7 @@ impl EncryptedChannel {
             };
             Ok(len)
         } else {
-            Err(Error::msg("Invalid channel state, cannot start handshake"))
+            Err(new_error!("Invalid channel state, cannot start handshake"))
         }
     }
 
@@ -124,7 +124,7 @@ impl EncryptedChannel {
 
                 Ok(len)
             }
-            PeerState::Connected { .. } => Err(Error::msg(
+            PeerState::Connected { .. } => Err(new_error!(
                 "Invalid channel state, cannot continue handshake",
             )),
         }
@@ -135,7 +135,7 @@ impl EncryptedChannel {
             let len = encryptor.write_message(data, encrypted)?;
             Ok(len)
         } else {
-            Err(Error::msg("Invalid channel state, cannot encrypt"))
+            Err(new_error!("Invalid channel state, cannot encrypt"))
         }
     }
 
@@ -144,7 +144,7 @@ impl EncryptedChannel {
             let len = encryptor.read_message(encrypted, data)?;
             Ok(len)
         } else {
-            Err(Error::msg("invalid channel state, cannot decrypt"))
+            Err(new_error!("invalid channel state, cannot decrypt"))
         }
     }
 
@@ -217,9 +217,7 @@ trait SimpleDeserialize<I>: Sized {
 
 fn write_vec<O: Write>(vec: &Vec<u8>, out: &mut O) -> Result<()> {
     let l1 = vec.len();
-    if l1 > 255 {
-        return Err(Error::msg("Invalid vec length"));
-    }
+    ensure!(l1 < 256, "Invalid vec length {}", l1);
     out.write_all(&[l1 as u8])?;
     out.write_all(vec)?;
     Ok(())

@@ -33,6 +33,12 @@ async fn main() -> Result<()> {
         let key = load_key(args.secret_key_file(), args.password())
             .context("Error while loading secret key, you may need to generate it first")?;
 
+        if args.show_my_id {
+            let peer_id = crevise::PeerId::from(&key);
+            println!("{}", peer_id);
+            return Ok(())
+        }
+
         let input = FramedRead::new(io::stdin(), LinesCodec::new())
             .err_into()
             .and_then(|s| future::ready(s.parse()));
