@@ -86,9 +86,10 @@ impl PeersMap {
         &self,
         peer: SocketAddr,
         first_message: &mut [u8],
+        expected_peer: PeerId
     ) -> Result<usize> {
         self.timeout_task(peer);
-        self.inner.start_handshake(peer, first_message).await
+        self.inner.start_handshake(peer, first_message, expected_peer).await
     }
 
     fn timeout_task(&self, peer: SocketAddr) {
@@ -166,9 +167,9 @@ impl PeersMapInner {
         }
     }
 
-    async fn start_handshake(&self, peer: SocketAddr, first_message: &mut [u8]) -> Result<usize> {
+    async fn start_handshake(&self, peer: SocketAddr, first_message: &mut [u8], expected_peer: PeerId) -> Result<usize> {
         let mut ch = EncryptedChannel::new(self.key(), self.known_peers.clone());
-        let sz = ch.start_handshake(first_message)?;
+        let sz = ch.start_handshake(first_message, expected_peer)?;
         self.map.write().await.insert(peer, sync::Mutex::new(ch));
         Ok(sz)
     }
@@ -201,7 +202,7 @@ impl PeersMapInner {
                 Err(new_error!("There was previous handshake!!!"))
             }
             None => {
-                eprintln!("Encrypted channel stored");
+                //eprintln!("Encrypted channel stored");
                 Ok((sz, true))
             }
         }

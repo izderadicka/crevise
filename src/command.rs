@@ -1,10 +1,9 @@
 use crate::{Error, Result, error::{bail, new_error}};
-use std::net::SocketAddr;
 use std::str::FromStr;
 
 pub enum Command {
-    Connect { peer: SocketAddr },
-    Send { to: SocketAddr, text: String },
+    Connect { peer: String },
+    Send { to: String, text: String },
 }
 
 fn split_at_first_space<'a>(s: &'a str) -> Result<(&'a str, &'a str)> {

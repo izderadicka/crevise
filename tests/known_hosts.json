@@ -1,0 +1,14 @@
+{
+    "ivan": {
+        "peer_id": "M5UWYJIGHIEYAZS3GLKTJFILA26J2FVD",
+        "addr": "127.0.0.1:8080"
+    },
+    "test": {
+        "peer_id": "IEIWYXBRARV5HHXQXC2DN2W3DN7IUBON",
+        "addr": "127.0.0.1:8081"
+    },
+    "kulisak": {
+        "peer_id": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+        "addr": "127.0.0.1:8082"
+    }
+}

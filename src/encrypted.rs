@@ -40,6 +40,7 @@ pub struct EncryptedChannel {
     params: NoiseParams,
     buf: Vec<u8>,
     known_peers: SharedKnownPeers,
+    expected_peer: Option<PeerId>
 }
 
 impl EncryptedChannel {
@@ -48,7 +49,7 @@ impl EncryptedChannel {
         self.state = PeerState::Unconnected;
     }
 
-    pub fn start_handshake(&mut self, first_message: &mut [u8]) -> Result<usize> {
+    pub fn start_handshake(&mut self, first_message: &mut [u8], expected_peer: PeerId) -> Result<usize> {
         if let PeerState::Unconnected = self.state {
             let mut noise = Builder::new(self.params.clone())
                 .local_private_key(&self.key.private)
@@ -61,6 +62,7 @@ impl EncryptedChannel {
                 side: Side::Initiator,
                 handshake: Some(noise),
             };
+            self.expected_peer = Some(expected_peer);
             Ok(len)
         } else {
             Err(new_error!("Invalid channel state, cannot start handshake"))
@@ -86,7 +88,7 @@ impl EncryptedChannel {
                         // <- e, ee, s, es
                         handshake.read_message(&in_message, &mut self.buf)?;
 
-                        let (_addr, _nick) = self.check_peer()?;
+                        let (_addr, _nick) = self.check_peer(&handshake)?;
 
                         // -> s, se
                         let len = handshake.write_message(&[], next_message)?;
@@ -100,7 +102,7 @@ impl EncryptedChannel {
                     (1, Side::Respondent) => {
                         // <- s, se
                         let _l = handshake.read_message(&in_message, &mut self.buf)?;
-                        let (_addr, _nick) = self.check_peer()?;
+                        let (_addr, _nick) = self.check_peer(&handshake)?;
                         self.state = PeerState::Connected {
                             encryptor: handshake.into_transport_mode()?,
                         };
@@ -137,20 +139,19 @@ impl EncryptedChannel {
         }
     }
 
-    fn check_peer<'a>(&'a self) -> Result<(Option<&'a SocketAddr>, &'a str)> {
-        if let PeerState::Connecting { ref handshake, .. } = self.state {
+    fn check_peer<'a>(&'a self, handshake: &HandshakeState) -> Result<(Option<&'a SocketAddr>, &'a str)> {
+        
             let pubkey = handshake
-                .as_ref()
-                .expect("BUG: Invalid state, handshake expected")
                 .get_remote_static()
                 .ok_or_else(|| new_error!("remote public key must be know"))?;
             let peer_id = PeerId::from_public_key(pubkey);
+            if let Some(ep) = self.expected_peer {
+                ensure!(ep == peer_id, "peer {} does not match expected peer {}", peer_id, ep);
+            }
             self.known_peers
                 .get_by_peer_id(&peer_id)
-                .ok_or_else(|| new_error!("peer is not known"))
-        } else {
-            panic!("Invalid state: can be used only in Connecting state")
-        }
+                .ok_or_else(|| new_error!("peer {} is not known", peer_id))
+        
     }
 
     pub fn encrypt(&mut self, data: &[u8], encrypted: &mut [u8]) -> Result<usize> {
@@ -194,6 +195,7 @@ impl EncryptedChannel {
 
             buf: vec![0; EncryptedChannel::MAX_HANDSHAKE_MSG_SIZE],
             known_peers,
+            expected_peer: None
         }
     }
 }

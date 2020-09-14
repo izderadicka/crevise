@@ -1,4 +1,4 @@
-use crevise::{Error, Result, error::{bail, new_error}};
+use crevise::{Result, error::{bail, new_error}};
 use std::{env, fs};
 use std::{net::SocketAddr, path::PathBuf};
 use structopt::StructOpt;
