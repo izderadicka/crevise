@@ -1,7 +1,7 @@
 {
     "ivan": {
         "peer_id": "M5UWYJIGHIEYAZS3GLKTJFILA26J2FVD",
-        "addr": "127.0.0.1:8080"
+        "addr": "127.0.0.1:8088"
     },
     "test": {
         "peer_id": "IEIWYXBRARV5HHXQXC2DN2W3DN7IUBON",

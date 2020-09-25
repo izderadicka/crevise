@@ -70,6 +70,19 @@ impl FromStr for PeerId {
     }
 }
 
+#[derive(Debug, Clone)]
+pub struct PeerInfo {
+    pub nick: String,
+    pub peer_addr: Option<SocketAddr>,
+    pub peer_id: PeerId,
+}
+
+impl Display for PeerInfo {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "@{}", self.nick)
+    }
+}
+
 #[derive(Clone)]
 pub struct PeersMap {
     inner: Arc<PeersMapInner>,
@@ -140,6 +153,10 @@ impl PeersMap {
         self.inner.is_connected(peer).await
     }
 
+    pub async fn peer_connected(&self, peer: &SocketAddr) -> Option<PeerInfo> {
+        self.inner.peer_connected(peer).await
+    }
+
     pub async fn remove(&self, peer: &SocketAddr) -> bool {
         self.inner.remove(peer).await
     }
@@ -169,7 +186,7 @@ impl PeersMapInner {
 
     async fn start_handshake(&self, peer: SocketAddr, first_message: &mut [u8], expected_peer: PeerId) -> Result<usize> {
         let mut ch = EncryptedChannel::new(self.key(), self.known_peers.clone());
-        let sz = ch.start_handshake(first_message, expected_peer)?;
+        let sz = ch.start_handshake(first_message, expected_peer).await?;
         self.map.write().await.insert(peer, sync::Mutex::new(ch));
         Ok(sz)
     }
@@ -187,12 +204,13 @@ impl PeersMapInner {
                     .lock()
                     .await
                     .continue_handshake(in_message, next_message)
+                    .await
                     .map(|sz| (sz, false))
             }
             None => EncryptedChannel::new(self.key(), self.known_peers.clone()),
         };
         // This is for first message in handshake
-        let sz = ch.continue_handshake(in_message, next_message)?;
+        let sz = ch.continue_handshake(in_message, next_message).await?;
         //eprintln!("Was first message from {}", peer);
         let mut m = self.map.write().await;
         match m.insert(peer, sync::Mutex::new(ch)) {
@@ -226,6 +244,14 @@ impl PeersMapInner {
             ch.lock().await.is_connected()
         } else {
             false
+        }
+    }
+
+    async fn peer_connected(&self, peer: &SocketAddr) -> Option<PeerInfo> {
+        if let Some(ch) = self.map.read().await.get(peer) {
+            ch.lock().await.peer_connected().cloned()
+        } else {
+            None
         }
     }
 

@@ -2,7 +2,7 @@
 #![recursion_limit = "512"]
 
 use encrypted::Keypair;
-use message::PeerInfo;
+use peers::PeerInfo;
 use futures::prelude::*;
 use futures::select;
 use std::mem::replace;
@@ -16,7 +16,7 @@ use peers::PeersMap;
 pub use encrypted::{generate_key, load_key, save_key};
 pub use message::Message;
 pub use error::{Error, Result};
-pub use peers::{PeerId, known::{KnownPeers, load_peers_from_json, SharedKnownPeers}};
+pub use peers::{PeerId, known::{load_peers_from_json, SharedKnownPeers}};
 
 
 
@@ -68,19 +68,21 @@ where
         Ok(server)
     }
 
-    fn map_addr_to_peer(&self, addr:SocketAddr) -> PeerInfo  {
-        if let Some((&peer_id, nick)) = self.known_peers.get_by_addr(&addr) {
+    async fn update_addr_for_peer(&self, nick: &str, addr: SocketAddr) {
+        self.known_peers.update_addr(nick, addr).await
+
+
+    }
+
+    async fn map_addr_to_peer(&self, addr:SocketAddr) -> PeerInfo  {
+        if let Some((peer_id, nick)) = self.known_peers.get_by_addr(&addr).await {
             PeerInfo {
-                peer_addr: addr,
-                peer_id: Some(peer_id),
-                nick: Some(nick.into())
+                peer_addr: Some(addr),
+                peer_id: peer_id,
+                nick: nick
             }
         } else {
-            PeerInfo {
-                peer_addr: addr,
-                peer_id: None,
-                nick: None  
-            }
+            todo!("Bug: Should always know peer")
         }
     }
 
@@ -95,7 +97,7 @@ where
                 Ok(size) => {
                     self.out
                         .send(Message::Post {
-                            peer: self.map_addr_to_peer( peer),
+                            peer: self.map_addr_to_peer( peer).await,
                             content: std::str::from_utf8(&self.buf[..size])
                                 .unwrap_or("<invalid string>")
                                 .to_string(),
@@ -117,7 +119,17 @@ where
                     if size > 0 {
                         self.to_send = OutputMessage::Plain((peer, size))
                     } else {
-                        self.out.send(Message::HadshakeDone { peer: self.map_addr_to_peer( peer) }).await?;
+                        if let Some(peer_info) = self.peers.peer_connected(&peer).await {
+                            if peer_info.peer_addr != Some(peer) {
+                                self.update_addr_for_peer(&peer_info.nick, peer).await;
+                            }
+                            self.out.send(Message::HadshakeDone { peer:peer_info}).await?;
+                        } else {
+                            panic!("BUG: invalid status must be connected now")
+                        }
+                        
+                        
+                        
                     }
                 }
                 Err(e) => {
@@ -132,8 +144,8 @@ where
     async fn process_command(&mut self, command: Command) -> Result<()> {
         match command {
             Command::Connect { peer } => {
-                match self.known_peers.get_by_nick(&peer) {
-                    Some((&peer_id, Some(&peer_addr))) => {
+                match self.known_peers.get_by_nick(&peer).await {
+                    Some((peer_id, Some(peer_addr))) => {
                         let len = self.peers.start_handshake(peer_addr, &mut self.buf, peer_id).await?;
                         self.to_send = OutputMessage::Plain((peer_addr, len));
 
@@ -145,8 +157,8 @@ where
                 //eprintln!("Encrypted channel initiated")
             }
             Command::Send { to: peer, text } => {
-                match self.known_peers.get_by_nick(&peer) {
-                    Some((_peer_id, Some(&peer_addr))) => {
+                match self.known_peers.get_by_nick(&peer).await {
+                    Some((_peer_id, Some(peer_addr))) => {
                     if self.peers.is_connected(&peer_addr).await {
                         let msg = text.as_bytes();
                         let size = msg.len();
@@ -167,7 +179,7 @@ where
     async fn clear_peer(&mut self, peer: SocketAddr) {
         if self.peers.remove(&peer).await {
             self.out
-                .send(Message::HandshakeCleared { peer: self.map_addr_to_peer( peer) })
+                .send(Message::HandshakeCleared { peer: self.map_addr_to_peer( peer).await })
                 .await
                 .unwrap_or_else(|e| eprintln!("Cannot send message: {}", e))
         }
@@ -190,7 +202,7 @@ where
                     {
                         Ok(len) => {
                             self.socket.send_to(&self.buf2[..len], peer).await?;
-                            self.out.send(Message::Sent { peer: self.map_addr_to_peer( peer) }).await?;
+                            self.out.send(Message::Sent { peer: self.map_addr_to_peer( peer).await }).await?;
                         }
                         Err(e) => {
                             self.clear_peer(peer).await;
@@ -200,7 +212,7 @@ where
                 }
                 OutputMessage::Plain((peer, l)) => {
                     if self.peers.is_connected(&peer).await {
-                        self.out.send(Message::HadshakeDone { peer: self.map_addr_to_peer( peer) }).await?;
+                        self.out.send(Message::HadshakeDone { peer: self.map_addr_to_peer( peer).await }).await?;
                     };
                     self.socket.send_to(&self.buf[..l], peer).await?;
                 }

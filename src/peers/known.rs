@@ -5,21 +5,64 @@ use crate::{
 };
 use std::net::SocketAddr;
 use std::{collections::HashMap, fs::File, io::Read, path::Path, sync::Arc};
-
-pub type SharedKnownPeers = Arc<KnownPeers>;
+use tokio::sync::RwLock;
 
 pub fn load_peers_from_json<P: AsRef<Path>>(path: P) -> Result<SharedKnownPeers> {
-    KnownPeers::from_json(path).map(|p| Arc::new(p))
+    SharedKnownPeers::from_json(path)
 }
 
-pub struct KnownPeers {
+#[derive(Clone, Debug)]
+pub struct SharedKnownPeers {
+    inner: Arc<RwLock<KnownPeers>>
+}
+
+impl SharedKnownPeers {
+    /// blocking
+    pub fn from_json<P: AsRef<Path>>(path: P) -> Result<Self> {
+        Ok(SharedKnownPeers {
+            inner: Arc::new(RwLock::new(KnownPeers::from_json(path)?))
+        })
+    }
+
+    pub fn from_json_reader<I: Read>(inp: &mut I) -> Result<Self> {
+        Ok(SharedKnownPeers {
+            inner: Arc::new(RwLock::new(KnownPeers::from_json_reader(inp)?))
+        })
+    }
+
+    pub async fn get_by_nick(&self, nick: &str) -> Option<(PeerId, Option<SocketAddr>)> {
+        self.inner.read().await.get_by_nick(nick).map(|x| (x.0.clone(), x.1.cloned()))
+    }
+
+    pub async fn  get_by_addr(&self, addr: &SocketAddr) -> Option<(PeerId, String)> {
+        self.inner.read().await.get_by_addr(addr).map(|x| (x.0.clone(), x.1.to_string()))
+    }
+
+    pub async fn get_by_peer_id(
+        &self,
+        peer: &PeerId,
+    ) -> Option<(Option<SocketAddr>, String)> {
+        self.inner.read().await.get_by_peer_id(peer).map(|x| (x.0.cloned(), x.1.to_string()))
+    }
+
+    pub async fn update_addr(&self, nick: &str, addr: SocketAddr) {
+        self.inner.write().await.update_addr(nick, addr)
+    }
+
+    pub async fn len(&self) -> usize {
+        self.inner.read().await.len()
+    }
+}
+
+#[derive(Debug)]
+struct KnownPeers {
     peers: HashMap<String, (PeerId, Option<SocketAddr>)>,
     index_peers: HashMap<PeerId, String>,
     index_addr: HashMap<SocketAddr, String>,
 }
 
 impl KnownPeers {
-    pub fn from_json_reader<I: Read>(inp: &mut I) -> Result<Self> {
+    fn from_json_reader<I: Read>(inp: &mut I) -> Result<Self> {
         use serde_json::Value;
         let json: Value = serde_json::from_reader(inp)?;
         let mut peers = KnownPeers {
@@ -61,22 +104,22 @@ impl KnownPeers {
         Ok(peers)
     }
 
-    pub fn from_json<P: AsRef<Path>>(path: P) -> Result<Self> {
+    fn from_json<P: AsRef<Path>>(path: P) -> Result<Self> {
         let mut f = File::open(path)?;
         KnownPeers::from_json_reader(&mut f)
     }
 
-    pub fn get_by_nick<'a>(&'a self, nick: &str) -> Option<(&'a PeerId, Option<&'a SocketAddr>)> {
+    fn get_by_nick<'a>(&'a self, nick: &str) -> Option<(&'a PeerId, Option<&'a SocketAddr>)> {
         self.peers.get(nick).map(|t| (&t.0, t.1.as_ref()))
     }
 
-    pub fn get_by_addr<'a>(&'a self, addr: &SocketAddr) -> Option<(&'a PeerId, &'a str)> {
+    fn get_by_addr<'a>(&'a self, addr: &SocketAddr) -> Option<(&'a PeerId, &'a str)> {
         self.index_addr
             .get(addr)
             .and_then(|nick| self.peers.get(nick).map(|r| (&r.0, nick.as_str())))
     }
 
-    pub fn get_by_peer_id<'a>(
+    fn get_by_peer_id<'a>(
         &'a self,
         peer: &PeerId,
     ) -> Option<(Option<&'a SocketAddr>, &'a str)> {
@@ -85,7 +128,18 @@ impl KnownPeers {
             .and_then(|nick| self.peers.get(nick).map(|r| (r.1.as_ref(), nick.as_str())))
     }
 
-    pub fn len(&self) -> usize {
+    fn update_addr(&mut self, nick: &str, addr: SocketAddr) {
+      let idx = &mut self.index_addr; // splitting borrow
+      self.peers.get_mut(nick).and_then(|item| {
+            let prev = item.1.take();
+            item.1 = Some(addr);
+            idx.insert(addr, nick.into());
+            prev
+        })
+        .and_then(|prev| idx.remove(&prev));
+    }
+
+    fn len(&self) -> usize {
         self.peers.len()
     }
 }
