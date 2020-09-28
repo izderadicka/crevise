@@ -1,5 +1,6 @@
 use crate::peers::PeerInfo;
 
+#[derive(Debug)]
 pub enum Message {
     Post { peer: PeerInfo, content: String },
     Sent { peer: PeerInfo },

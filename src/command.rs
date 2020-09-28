@@ -1,4 +1,7 @@
-use crate::{Error, Result, error::{bail, new_error}};
+use crate::{
+    error::{bail, new_error},
+    Error, Result,
+};
 use std::str::FromStr;
 
 pub enum Command {

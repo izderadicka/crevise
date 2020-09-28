@@ -13,36 +13,45 @@ pub fn load_peers_from_json<P: AsRef<Path>>(path: P) -> Result<SharedKnownPeers>
 
 #[derive(Clone, Debug)]
 pub struct SharedKnownPeers {
-    inner: Arc<RwLock<KnownPeers>>
+    inner: Arc<RwLock<KnownPeers>>,
 }
 
 impl SharedKnownPeers {
     /// blocking
     pub fn from_json<P: AsRef<Path>>(path: P) -> Result<Self> {
         Ok(SharedKnownPeers {
-            inner: Arc::new(RwLock::new(KnownPeers::from_json(path)?))
+            inner: Arc::new(RwLock::new(KnownPeers::from_json(path)?)),
         })
     }
 
     pub fn from_json_reader<I: Read>(inp: &mut I) -> Result<Self> {
         Ok(SharedKnownPeers {
-            inner: Arc::new(RwLock::new(KnownPeers::from_json_reader(inp)?))
+            inner: Arc::new(RwLock::new(KnownPeers::from_json_reader(inp)?)),
         })
     }
 
     pub async fn get_by_nick(&self, nick: &str) -> Option<(PeerId, Option<SocketAddr>)> {
-        self.inner.read().await.get_by_nick(nick).map(|x| (x.0.clone(), x.1.cloned()))
+        self.inner
+            .read()
+            .await
+            .get_by_nick(nick)
+            .map(|x| (x.0.clone(), x.1.cloned()))
     }
 
-    pub async fn  get_by_addr(&self, addr: &SocketAddr) -> Option<(PeerId, String)> {
-        self.inner.read().await.get_by_addr(addr).map(|x| (x.0.clone(), x.1.to_string()))
+    pub async fn get_by_addr(&self, addr: &SocketAddr) -> Option<(PeerId, String)> {
+        self.inner
+            .read()
+            .await
+            .get_by_addr(addr)
+            .map(|x| (x.0.clone(), x.1.to_string()))
     }
 
-    pub async fn get_by_peer_id(
-        &self,
-        peer: &PeerId,
-    ) -> Option<(Option<SocketAddr>, String)> {
-        self.inner.read().await.get_by_peer_id(peer).map(|x| (x.0.cloned(), x.1.to_string()))
+    pub async fn get_by_peer_id(&self, peer: &PeerId) -> Option<(Option<SocketAddr>, String)> {
+        self.inner
+            .read()
+            .await
+            .get_by_peer_id(peer)
+            .map(|x| (x.0.cloned(), x.1.to_string()))
     }
 
     pub async fn update_addr(&self, nick: &str, addr: SocketAddr) {
@@ -119,24 +128,23 @@ impl KnownPeers {
             .and_then(|nick| self.peers.get(nick).map(|r| (&r.0, nick.as_str())))
     }
 
-    fn get_by_peer_id<'a>(
-        &'a self,
-        peer: &PeerId,
-    ) -> Option<(Option<&'a SocketAddr>, &'a str)> {
+    fn get_by_peer_id<'a>(&'a self, peer: &PeerId) -> Option<(Option<&'a SocketAddr>, &'a str)> {
         self.index_peers
             .get(peer)
             .and_then(|nick| self.peers.get(nick).map(|r| (r.1.as_ref(), nick.as_str())))
     }
 
     fn update_addr(&mut self, nick: &str, addr: SocketAddr) {
-      let idx = &mut self.index_addr; // splitting borrow
-      self.peers.get_mut(nick).and_then(|item| {
-            let prev = item.1.take();
-            item.1 = Some(addr);
-            idx.insert(addr, nick.into());
-            prev
-        })
-        .and_then(|prev| idx.remove(&prev));
+        let idx = &mut self.index_addr; // splitting borrow
+        self.peers
+            .get_mut(nick)
+            .and_then(|item| {
+                let prev = item.1.take();
+                item.1 = Some(addr);
+                idx.insert(addr, nick.into());
+                prev
+            })
+            .and_then(|prev| idx.remove(&prev));
     }
 
     fn len(&self) -> usize {

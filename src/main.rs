@@ -36,10 +36,11 @@ async fn main() -> Result<()> {
         if args.show_my_id {
             let peer_id = crevise::PeerId::from(&key);
             println!("{}", peer_id);
-            return Ok(())
+            return Ok(());
         }
 
-        let peers = crevise::load_peers_from_json(args.known_peers()).context("known peers file load error")?;
+        let peers = crevise::load_peers_from_json(args.known_peers())
+            .context("known peers file load error")?;
 
         let input = FramedRead::new(io::stdin(), LinesCodec::new())
             .err_into()

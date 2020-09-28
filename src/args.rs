@@ -1,4 +1,7 @@
-use crevise::{Result, error::{bail, new_error}};
+use crevise::{
+    error::{bail, new_error},
+    Result,
+};
 use std::{env, fs};
 use std::{net::SocketAddr, path::PathBuf};
 use structopt::StructOpt;
@@ -21,7 +24,7 @@ pub struct Args {
     pub show_my_id: bool,
 
     #[structopt(short, long)]
-    known_peers: Option<PathBuf>
+    known_peers: Option<PathBuf>,
 }
 
 pub fn parse_args() -> Result<Args> {
@@ -31,9 +34,7 @@ pub fn parse_args() -> Result<Args> {
         if let Ok(p) = env::var("CREVISE_PASSWORD") {
             args.password = Some(p);
         } else {
-            bail!(
-                "password mut be provided either through env variable or argument",
-            );
+            bail!("password mut be provided either through env variable or argument",);
         }
     }
 
@@ -56,9 +57,10 @@ pub fn parse_args() -> Result<Args> {
 }
 
 impl Args {
-
     pub fn known_peers(&self) -> PathBuf {
-        self.known_peers.clone().unwrap_or_else(|| self.config_dir.as_ref().unwrap().join("peers"))
+        self.known_peers
+            .clone()
+            .unwrap_or_else(|| self.config_dir.as_ref().unwrap().join("peers"))
     }
 
     pub fn password(&self) -> &str {
