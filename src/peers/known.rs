@@ -38,24 +38,24 @@ impl SharedKnownPeers {
             .map(|x| (x.0.clone(), x.1.cloned()))
     }
 
-    pub async fn get_by_addr(&self, addr: &SocketAddr) -> Option<(PeerId, String)> {
+    pub async fn get_by_addr(&self, addr: &SocketAddr) -> Option<(PeerId, Option<String>)> {
         self.inner
             .read()
             .await
             .get_by_addr(addr)
-            .map(|x| (x.0.clone(), x.1.to_string()))
+            .map(|x| (x.0.clone(), x.1.map(|s| s.to_string())))
     }
 
-    pub async fn get_by_peer_id(&self, peer: &PeerId) -> Option<(Option<SocketAddr>, String)> {
+    pub async fn get_by_peer_id(&self, peer: &PeerId) -> Option<(Option<SocketAddr>, Option<String>)> {
         self.inner
             .read()
             .await
             .get_by_peer_id(peer)
-            .map(|x| (x.0.cloned(), x.1.to_string()))
+            .map(|x| (x.0.cloned(), x.1.map(|s| s.to_string())))
     }
 
-    pub async fn update_addr(&self, nick: &str, addr: SocketAddr) {
-        self.inner.write().await.update_addr(nick, addr)
+    pub async fn update_addr(&self, peer_id: &PeerId, addr: SocketAddr) {
+        self.inner.write().await.update_addr(peer_id, addr)
     }
 
     pub async fn len(&self) -> usize {
@@ -65,9 +65,9 @@ impl SharedKnownPeers {
 
 #[derive(Debug)]
 struct KnownPeers {
-    peers: HashMap<String, (PeerId, Option<SocketAddr>)>,
-    index_peers: HashMap<PeerId, String>,
-    index_addr: HashMap<SocketAddr, String>,
+    peers: HashMap<PeerId, (Option<String>, Option<SocketAddr>)>,
+    index_nick: HashMap<String, PeerId>,
+    index_addr: HashMap<SocketAddr, PeerId>,
 }
 
 impl KnownPeers {
@@ -76,33 +76,32 @@ impl KnownPeers {
         let json: Value = serde_json::from_reader(inp)?;
         let mut peers = KnownPeers {
             peers: HashMap::new(),
-            index_peers: HashMap::new(),
+            index_nick: HashMap::new(),
             index_addr: HashMap::new(),
         };
 
         if let Value::Object(map) = json {
-            for (nick, o) in map {
-                let peer_id = o
-                    .get("peer_id")
-                    .ok_or_else(|| new_error!("peer_id is mandatory"))?;
-                let peer_id: PeerId = if let Value::String(s) = peer_id {
-                    s.parse()?
-                } else {
-                    bail!("peer_id must be string")
-                };
-
+            for (peer_id, o) in map {
+                let nick = o
+                    .get("nick")
+                    .map(|x| if let Value::String(s) = x {Ok(s.to_string())} else {Err(new_error!("nick must be string"))})
+                    .transpose()?;
+                
                 let addr = o.get("addr");
                 let addr: Option<SocketAddr> = match addr {
                     Some(Value::String(a)) => Some(a.parse()?),
                     Some(_) => bail!("socket address must be string"),
                     None => None,
                 };
-                let prev = peers.peers.insert(nick.clone(), (peer_id, addr));
-                ensure!(prev.is_none(), "nick is not unique");
-                let prev = peers.index_peers.insert(peer_id, nick.clone());
+                let peer_id = peer_id.parse()?;
+                let prev = peers.peers.insert(peer_id, (nick.clone(), addr));
                 ensure!(prev.is_none(), "peer_id is not unique");
+                if let Some(n) = nick {
+                let prev = peers.index_nick.insert(n, peer_id);
+                ensure!(prev.is_none(), "peer_id is not unique");
+                }
                 if let Some(a) = addr {
-                    let prev = peers.index_addr.insert(a, nick);
+                    let prev = peers.index_addr.insert(a, peer_id);
                     ensure!(prev.is_none(), "addr is not unique")
                 }
             }
@@ -119,29 +118,30 @@ impl KnownPeers {
     }
 
     fn get_by_nick<'a>(&'a self, nick: &str) -> Option<(&'a PeerId, Option<&'a SocketAddr>)> {
-        self.peers.get(nick).map(|t| (&t.0, t.1.as_ref()))
+        self.index_nick.get(nick)
+        .and_then(|peer_id| self.peers.get(peer_id).map(|r| (peer_id, r.1.as_ref())))
     }
 
-    fn get_by_addr<'a>(&'a self, addr: &SocketAddr) -> Option<(&'a PeerId, &'a str)> {
+    fn get_by_addr<'a>(&'a self, addr: &SocketAddr) -> Option<(&'a PeerId, Option<&'a str>)> {
         self.index_addr
             .get(addr)
-            .and_then(|nick| self.peers.get(nick).map(|r| (&r.0, nick.as_str())))
+            .and_then(|peer_id| self.peers.get(peer_id).map(|r| (peer_id, r.0.as_ref().map(String::as_str))))
     }
 
-    fn get_by_peer_id<'a>(&'a self, peer: &PeerId) -> Option<(Option<&'a SocketAddr>, &'a str)> {
-        self.index_peers
+    fn get_by_peer_id<'a>(&'a self, peer: &PeerId) -> Option<(Option<&'a SocketAddr>, Option<&'a str>)> {
+        self.peers
             .get(peer)
-            .and_then(|nick| self.peers.get(nick).map(|r| (r.1.as_ref(), nick.as_str())))
+            .map(|r| (r.1.as_ref(), r.0.as_ref().map(String::as_str)))
     }
 
-    fn update_addr(&mut self, nick: &str, addr: SocketAddr) {
+    fn update_addr(&mut self, peer_id: &PeerId, addr: SocketAddr) {
         let idx = &mut self.index_addr; // splitting borrow
         self.peers
-            .get_mut(nick)
+            .get_mut(peer_id)
             .and_then(|item| {
                 let prev = item.1.take();
                 item.1 = Some(addr);
-                idx.insert(addr, nick.into());
+                idx.insert(addr, *peer_id);
                 prev
             })
             .and_then(|prev| idx.remove(&prev));
@@ -159,9 +159,9 @@ mod tests {
 
     #[test]
     fn test_json_load() -> Result<()> {
-        let json = r#"{"ivan": {"peer_id": "M5UWYJIGHIEYAZS3GLKTJFILA26J2FVD", "addr": "127.0.0.1:8080"},
-            "test": {"peer_id": "IEIWYXBRARV5HHXQXC2DN2W3DN7IUBON","addr": "127.0.0.1:8081"},
-            "kulisak": {"peer_id": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"}
+        let json = r#"{"M5UWYJIGHIEYAZS3GLKTJFILA26J2FVD": {"nick": "ivan",  "addr": "127.0.0.1:8080"},
+            "IEIWYXBRARV5HHXQXC2DN2W3DN7IUBON": {"nick": "test", "addr": "127.0.0.1:8081"},
+            "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA": {"nick": "kulisak"}
         }"#;
         let mut inp = Cursor::new(json);
         let peers = KnownPeers::from_json_reader(&mut inp)?;
@@ -176,13 +176,13 @@ mod tests {
             peers.get_by_nick("ivan").expect("ivan nick to be found")
         );
         assert_eq!(
-            (Some(&a2), "test"),
+            (Some(&a2), Some("test")),
             peers
                 .get_by_peer_id(&p2)
                 .expect("test peer id is valid key")
         );
         assert_eq!(
-            (&p2, "test"),
+            (&p2, Some("test")),
             peers.get_by_addr(&a2).expect("test addr is valid key")
         );
 

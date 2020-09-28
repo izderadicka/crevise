@@ -80,14 +80,18 @@ impl FromStr for PeerId {
 
 #[derive(Debug, Clone)]
 pub struct PeerInfo {
-    pub nick: String,
+    pub nick: Option<String>,
     pub peer_addr: Option<SocketAddr>,
     pub peer_id: PeerId,
 }
 
 impl Display for PeerInfo {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "@{}", self.nick)
+        match self.nick {
+            Some(ref nick) => write!(f, "@{}", nick),
+            _ => write!(f, "#{}", self.peer_id)
+        }
+        
     }
 }
 

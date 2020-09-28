@@ -73,8 +73,8 @@ where
         Ok(server)
     }
 
-    async fn update_addr_for_peer(&self, nick: &str, addr: SocketAddr) {
-        self.known_peers.update_addr(nick, addr).await
+    async fn update_addr_for_peer(&self, peer_id: &PeerId, addr: SocketAddr) {
+        self.known_peers.update_addr(peer_id, addr).await
     }
 
     async fn map_addr_to_peer(&self, addr: SocketAddr) -> PeerInfo {
@@ -124,7 +124,7 @@ where
                     } else {
                         if let Some(peer_info) = self.peers.peer_connected(&peer).await {
                             if peer_info.peer_addr != Some(peer) {
-                                self.update_addr_for_peer(&peer_info.nick, peer).await;
+                                self.update_addr_for_peer(&peer_info.peer_id, peer).await;
                             }
                             self.out
                                 .send(Message::HadshakeDone { peer: peer_info })

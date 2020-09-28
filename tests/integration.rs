@@ -9,14 +9,14 @@ use std::net::SocketAddr;
 fn insert_peer(m: &mut json::Map<String, json::Value>, nick: &str, key: &Keypair, port: u16) {
     let mut v = json::Map::new();
     v.insert(
-        "peer_id".into(),
-        json::Value::String(PeerId::from(key).to_string()),
+        "nick".into(),
+        json::Value::String(nick.to_string()),
     );
     v.insert(
         "addr".into(),
         json::Value::String(SocketAddr::from(([127, 0, 0, 1], port)).to_string()),
     );
-    m.insert(nick.into(), json::Value::Object(v));
+    m.insert(PeerId::from(key).to_string(), json::Value::Object(v));
 }
 
 async fn run_client(
@@ -55,7 +55,7 @@ async fn run_two_clients() -> Result<()> {
     }))
     .await?;
     if let Some(Message::HadshakeDone { peer }) = b_out.next().await {
-            assert_eq!("peer_a", peer.nick);
+            assert_eq!(Some("peer_a".into()), peer.nick);
             assert_eq!(a_id, peer.peer_id);
             assert_eq!(Some(a_addr), peer.peer_addr);
     } else {
@@ -63,7 +63,7 @@ async fn run_two_clients() -> Result<()> {
     }
 
     if let Some(Message::HadshakeDone { peer }) = a_out.next().await {
-            assert_eq!("peer_b", peer.nick);
+            assert_eq!(Some("peer_b".into()), peer.nick);
             assert_eq!(b_id, peer.peer_id);
             assert_eq!(Some(b_addr), peer.peer_addr);
     } else {
@@ -76,7 +76,7 @@ async fn run_two_clients() -> Result<()> {
     }))
     .await?;
     if let Some(Message::Post { peer, content }) = b_out.next().await {
-            assert_eq!("peer_a", peer.nick);
+            assert_eq!(Some("peer_a".into()), peer.nick);
             assert_eq!(a_id, peer.peer_id);
             assert_eq!(Some(a_addr), peer.peer_addr);
             assert_eq!("Hey", content);
@@ -90,14 +90,14 @@ async fn run_two_clients() -> Result<()> {
     }))
     .await?;
     if let Some(Message::Sent { peer}) = a_out.next().await {
-        assert_eq!("peer_b", peer.nick);
+        assert_eq!(Some("peer_b".into()), peer.nick);
         assert_eq!(b_id, peer.peer_id);
         assert_eq!(Some(b_addr), peer.peer_addr);
 } else {
     panic!("Invalid message")
 }
     if let Some(Message::Post { peer, content }) = a_out.next().await {
-            assert_eq!("peer_b", peer.nick);
+            assert_eq!(Some("peer_b".into()), peer.nick);
             assert_eq!(b_id, peer.peer_id);
             assert_eq!(Some(b_addr), peer.peer_addr);
             assert_eq!("How", content);
