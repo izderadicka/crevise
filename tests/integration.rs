@@ -1,7 +1,7 @@
 use crevise::error::Result;
 use crevise::{generate_key, Command, Keypair, MainLoop, Message, PeerId, SharedKnownPeers};
 use futures::channel::mpsc;
-use futures::prelude::*;
+use futures::{future,prelude::*};
 use serde_json as json;
 use std::io::Cursor;
 use std::net::SocketAddr;
@@ -23,13 +23,13 @@ async fn run_client(
     addr: SocketAddr,
     key: Keypair,
     known_peers: SharedKnownPeers,
-) -> Result<(mpsc::Sender<Result<Command>>, mpsc::Receiver<Message>)> {
+) -> Result<(mpsc::Sender<Result<Command>>, impl Stream<Item=Message>)> {
     let (in_tx, in_rx) = mpsc::channel(10);
     let (out_tx, out_rx) = mpsc::channel(10);
     let out_tx = out_tx.sink_err_into();
     let client = MainLoop::new(addr, key, in_rx, out_tx, known_peers).await?;
     tokio::spawn(client.run());
-    Ok((in_tx, out_rx))
+    Ok((in_tx, out_rx.filter(|i| future::ready(if let Message::NewLine = i {false} else {true}))))
 }
 
 #[tokio::test]
@@ -54,24 +54,20 @@ async fn run_two_clients() -> Result<()> {
         peer: "peer_b".into(),
     }))
     .await?;
-    while let Some(m) = b_out.next().await {
-        println!("Message B: {:?}", m);
-        if let Message::HadshakeDone { peer } = m {
+    if let Some(Message::HadshakeDone { peer }) = b_out.next().await {
             assert_eq!("peer_a", peer.nick);
             assert_eq!(a_id, peer.peer_id);
             assert_eq!(Some(a_addr), peer.peer_addr);
-            break;
-        }
+    } else {
+        panic!("Invalid message")
     }
 
-    while let Some(m) = a_out.next().await {
-        println!("Message: A {:?}", m);
-        if let Message::HadshakeDone { peer } = m {
+    if let Some(Message::HadshakeDone { peer }) = a_out.next().await {
             assert_eq!("peer_b", peer.nick);
             assert_eq!(b_id, peer.peer_id);
             assert_eq!(Some(b_addr), peer.peer_addr);
-            break;
-        }
+    } else {
+        panic!("Invalid message")
     }
 
     a_in.send(Ok(Command::Send {
@@ -79,15 +75,13 @@ async fn run_two_clients() -> Result<()> {
         text: "Hey".into(),
     }))
     .await?;
-    while let Some(m) = b_out.next().await {
-        println!("Message B: {:?}", m);
-        if let Message::Post { peer, content } = m {
+    if let Some(Message::Post { peer, content }) = b_out.next().await {
             assert_eq!("peer_a", peer.nick);
             assert_eq!(a_id, peer.peer_id);
             assert_eq!(Some(a_addr), peer.peer_addr);
             assert_eq!("Hey", content);
-            break;
-        }
+    } else {
+        panic!("Invalid message")
     }
 
     b_in.send(Ok(Command::Send {
@@ -95,15 +89,20 @@ async fn run_two_clients() -> Result<()> {
         text: "How".into(),
     }))
     .await?;
-    while let Some(m) = a_out.next().await {
-        println!("Message A: {:?}", m);
-        if let Message::Post { peer, content } = m {
+    if let Some(Message::Sent { peer}) = a_out.next().await {
+        assert_eq!("peer_b", peer.nick);
+        assert_eq!(b_id, peer.peer_id);
+        assert_eq!(Some(b_addr), peer.peer_addr);
+} else {
+    panic!("Invalid message")
+}
+    if let Some(Message::Post { peer, content }) = a_out.next().await {
             assert_eq!("peer_b", peer.nick);
             assert_eq!(b_id, peer.peer_id);
             assert_eq!(Some(b_addr), peer.peer_addr);
             assert_eq!("How", content);
-            break;
-        }
+    } else {
+        panic!("Invalid message")
     }
 
     Ok(())
