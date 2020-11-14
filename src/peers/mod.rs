@@ -89,9 +89,8 @@ impl Display for PeerInfo {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self.nick {
             Some(ref nick) => write!(f, "@{}", nick),
-            _ => write!(f, "#{}", self.peer_id)
+            _ => write!(f, "#{}", self.peer_id),
         }
-        
     }
 }
 

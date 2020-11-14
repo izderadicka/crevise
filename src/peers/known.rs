@@ -46,7 +46,10 @@ impl SharedKnownPeers {
             .map(|x| (x.0.clone(), x.1.map(|s| s.to_string())))
     }
 
-    pub async fn get_by_peer_id(&self, peer: &PeerId) -> Option<(Option<SocketAddr>, Option<String>)> {
+    pub async fn get_by_peer_id(
+        &self,
+        peer: &PeerId,
+    ) -> Option<(Option<SocketAddr>, Option<String>)> {
         self.inner
             .read()
             .await
@@ -84,9 +87,15 @@ impl KnownPeers {
             for (peer_id, o) in map {
                 let nick = o
                     .get("nick")
-                    .map(|x| if let Value::String(s) = x {Ok(s.to_string())} else {Err(new_error!("nick must be string"))})
+                    .map(|x| {
+                        if let Value::String(s) = x {
+                            Ok(s.to_string())
+                        } else {
+                            Err(new_error!("nick must be string"))
+                        }
+                    })
                     .transpose()?;
-                
+
                 let addr = o.get("addr");
                 let addr: Option<SocketAddr> = match addr {
                     Some(Value::String(a)) => Some(a.parse()?),
@@ -97,8 +106,8 @@ impl KnownPeers {
                 let prev = peers.peers.insert(peer_id, (nick.clone(), addr));
                 ensure!(prev.is_none(), "peer_id is not unique");
                 if let Some(n) = nick {
-                let prev = peers.index_nick.insert(n, peer_id);
-                ensure!(prev.is_none(), "peer_id is not unique");
+                    let prev = peers.index_nick.insert(n, peer_id);
+                    ensure!(prev.is_none(), "peer_id is not unique");
                 }
                 if let Some(a) = addr {
                     let prev = peers.index_addr.insert(a, peer_id);
@@ -118,17 +127,23 @@ impl KnownPeers {
     }
 
     fn get_by_nick<'a>(&'a self, nick: &str) -> Option<(&'a PeerId, Option<&'a SocketAddr>)> {
-        self.index_nick.get(nick)
-        .and_then(|peer_id| self.peers.get(peer_id).map(|r| (peer_id, r.1.as_ref())))
+        self.index_nick
+            .get(nick)
+            .and_then(|peer_id| self.peers.get(peer_id).map(|r| (peer_id, r.1.as_ref())))
     }
 
     fn get_by_addr<'a>(&'a self, addr: &SocketAddr) -> Option<(&'a PeerId, Option<&'a str>)> {
-        self.index_addr
-            .get(addr)
-            .and_then(|peer_id| self.peers.get(peer_id).map(|r| (peer_id, r.0.as_ref().map(String::as_str))))
+        self.index_addr.get(addr).and_then(|peer_id| {
+            self.peers
+                .get(peer_id)
+                .map(|r| (peer_id, r.0.as_ref().map(String::as_str)))
+        })
     }
 
-    fn get_by_peer_id<'a>(&'a self, peer: &PeerId) -> Option<(Option<&'a SocketAddr>, Option<&'a str>)> {
+    fn get_by_peer_id<'a>(
+        &'a self,
+        peer: &PeerId,
+    ) -> Option<(Option<&'a SocketAddr>, Option<&'a str>)> {
         self.peers
             .get(peer)
             .map(|r| (r.1.as_ref(), r.0.as_ref().map(String::as_str)))

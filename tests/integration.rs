@@ -1,17 +1,14 @@
 use crevise::error::Result;
 use crevise::{generate_key, Command, Keypair, MainLoop, Message, PeerId, SharedKnownPeers};
 use futures::channel::mpsc;
-use futures::{future,prelude::*};
+use futures::{future, prelude::*};
 use serde_json as json;
 use std::io::Cursor;
 use std::net::SocketAddr;
 
 fn insert_peer(m: &mut json::Map<String, json::Value>, nick: &str, key: &Keypair, port: u16) {
     let mut v = json::Map::new();
-    v.insert(
-        "nick".into(),
-        json::Value::String(nick.to_string()),
-    );
+    v.insert("nick".into(), json::Value::String(nick.to_string()));
     v.insert(
         "addr".into(),
         json::Value::String(SocketAddr::from(([127, 0, 0, 1], port)).to_string()),
@@ -23,13 +20,22 @@ async fn run_client(
     addr: SocketAddr,
     key: Keypair,
     known_peers: SharedKnownPeers,
-) -> Result<(mpsc::Sender<Result<Command>>, impl Stream<Item=Message>)> {
+) -> Result<(mpsc::Sender<Result<Command>>, impl Stream<Item = Message>)> {
     let (in_tx, in_rx) = mpsc::channel(10);
     let (out_tx, out_rx) = mpsc::channel(10);
     let out_tx = out_tx.sink_err_into();
     let client = MainLoop::new(addr, key, in_rx, out_tx, known_peers).await?;
     tokio::spawn(client.run());
-    Ok((in_tx, out_rx.filter(|i| future::ready(if let Message::NewLine = i {false} else {true}))))
+    Ok((
+        in_tx,
+        out_rx.filter(|i| {
+            future::ready(if let Message::NewLine = i {
+                false
+            } else {
+                true
+            })
+        }),
+    ))
 }
 
 #[tokio::test]
@@ -55,17 +61,17 @@ async fn run_two_clients() -> Result<()> {
     }))
     .await?;
     if let Some(Message::HadshakeDone { peer }) = b_out.next().await {
-            assert_eq!(Some("peer_a".into()), peer.nick);
-            assert_eq!(a_id, peer.peer_id);
-            assert_eq!(Some(a_addr), peer.peer_addr);
+        assert_eq!(Some("peer_a".into()), peer.nick);
+        assert_eq!(a_id, peer.peer_id);
+        assert_eq!(Some(a_addr), peer.peer_addr);
     } else {
         panic!("Invalid message")
     }
 
     if let Some(Message::HadshakeDone { peer }) = a_out.next().await {
-            assert_eq!(Some("peer_b".into()), peer.nick);
-            assert_eq!(b_id, peer.peer_id);
-            assert_eq!(Some(b_addr), peer.peer_addr);
+        assert_eq!(Some("peer_b".into()), peer.nick);
+        assert_eq!(b_id, peer.peer_id);
+        assert_eq!(Some(b_addr), peer.peer_addr);
     } else {
         panic!("Invalid message")
     }
@@ -76,10 +82,10 @@ async fn run_two_clients() -> Result<()> {
     }))
     .await?;
     if let Some(Message::Post { peer, content }) = b_out.next().await {
-            assert_eq!(Some("peer_a".into()), peer.nick);
-            assert_eq!(a_id, peer.peer_id);
-            assert_eq!(Some(a_addr), peer.peer_addr);
-            assert_eq!("Hey", content);
+        assert_eq!(Some("peer_a".into()), peer.nick);
+        assert_eq!(a_id, peer.peer_id);
+        assert_eq!(Some(a_addr), peer.peer_addr);
+        assert_eq!("Hey", content);
     } else {
         panic!("Invalid message")
     }
@@ -89,18 +95,18 @@ async fn run_two_clients() -> Result<()> {
         text: "How".into(),
     }))
     .await?;
-    if let Some(Message::Sent { peer}) = a_out.next().await {
+    if let Some(Message::Sent { peer }) = a_out.next().await {
         assert_eq!(Some("peer_b".into()), peer.nick);
         assert_eq!(b_id, peer.peer_id);
         assert_eq!(Some(b_addr), peer.peer_addr);
-} else {
-    panic!("Invalid message")
-}
+    } else {
+        panic!("Invalid message")
+    }
     if let Some(Message::Post { peer, content }) = a_out.next().await {
-            assert_eq!(Some("peer_b".into()), peer.nick);
-            assert_eq!(b_id, peer.peer_id);
-            assert_eq!(Some(b_addr), peer.peer_addr);
-            assert_eq!("How", content);
+        assert_eq!(Some("peer_b".into()), peer.nick);
+        assert_eq!(b_id, peer.peer_id);
+        assert_eq!(Some(b_addr), peer.peer_addr);
+        assert_eq!("How", content);
     } else {
         panic!("Invalid message")
     }
